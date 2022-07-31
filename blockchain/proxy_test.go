@@ -46,11 +46,15 @@ func (m *mockHTTPClient) Do(req *http.Request) (*http.Response, error) {
 }
 
 func createMockClientRespondingBytes(responseBytes []byte) *mockHTTPClient {
+	return createMockClientRespondingBytesWithStatusCode(responseBytes, http.StatusOK)
+}
+
+func createMockClientRespondingBytesWithStatusCode(responseBytes []byte, status int) *mockHTTPClient {
 	return &mockHTTPClient{
 		doCalled: func(req *http.Request) (*http.Response, error) {
 			return &http.Response{
 				Body:       ioutil.NopCloser(bytes.NewReader(responseBytes)),
-				StatusCode: http.StatusOK,
+				StatusCode: status,
 			}, nil
 		},
 	}
@@ -608,4 +612,84 @@ func TestElrondProxy_GetGenesisNodesPubKeys(t *testing.T) {
 	require.Nil(t, err)
 
 	require.Equal(t, expectedGenesisNodes, response)
+}
+
+func TestElrondProxy_GetAccountKeys(t *testing.T) {
+	t.Parallel()
+
+	defaultResponseBytes := []byte(`{"data":{"pairs":{"666f6f":"626172"}},"error":"","code":""}`) // "key": "value"
+	address, err := data.NewAddressFromBech32String("erd1qqqqqqqqqqqqqpgqfzydqmdw7m2vazsp6u5p95yxz76t2p9rd8ss0zp9ts")
+	assert.NotNil(t, address)
+	assert.Nil(t, err)
+
+	t.Run("retrieve all account storage data", func(t *testing.T) {
+		httpClient := createMockClientRespondingBytes(defaultResponseBytes)
+		args := createMockArgsElrondProxy(httpClient)
+		proxy, _ := NewElrondProxy(args)
+
+		expectedAccountKeys := &data.AccountKeys{
+			"666f6f": "626172", // "key": "value"
+		}
+		response, err := proxy.GetAccountKeys(context.Background(), address)
+		assert.Nil(t, err)
+		assert.Equal(t, expectedAccountKeys, response)
+	})
+	t.Run("fail on empty address", func(t *testing.T) {
+		httpClient := createMockClientRespondingBytes(defaultResponseBytes)
+		args := createMockArgsElrondProxy(httpClient)
+		proxy, _ := NewElrondProxy(args)
+
+		response, err := proxy.GetAccountKeys(context.Background(), nil)
+		assert.Error(t, err)
+		assert.Nil(t, response)
+	})
+	t.Run("fail on invalid address", func(t *testing.T) {
+		httpClient := createMockClientRespondingBytes(defaultResponseBytes)
+		args := createMockArgsElrondProxy(httpClient)
+		proxy, _ := NewElrondProxy(args)
+
+		response, err := proxy.GetAccountKeys(context.Background(), data.NewAddressFromBytes([]byte{}))
+		assert.Error(t, err)
+		assert.Nil(t, response)
+	})
+	t.Run("fail on empty response", func(t *testing.T) {
+		httpClient := createMockClientRespondingBytes([]byte{})
+		args := createMockArgsElrondProxy(httpClient)
+		proxy, _ := NewElrondProxy(args)
+
+		response, err := proxy.GetAccountKeys(context.Background(), address)
+		assert.NotNil(t, err)
+		assert.IsType(t, &json.SyntaxError{}, err)
+		assert.Nil(t, response)
+	})
+	t.Run("fail on invalid response", func(t *testing.T) {
+		httpClient := createMockClientRespondingBytes([]byte("invalid"))
+		args := createMockArgsElrondProxy(httpClient)
+		proxy, _ := NewElrondProxy(args)
+
+		response, err := proxy.GetAccountKeys(context.Background(), address)
+		assert.NotNil(t, err)
+		assert.IsType(t, &json.SyntaxError{}, err)
+		assert.Nil(t, response)
+	})
+	t.Run("fail on response error status", func(t *testing.T) {
+		httpClient := createMockClientRespondingBytesWithStatusCode(defaultResponseBytes, http.StatusBadRequest)
+		args := createMockArgsElrondProxy(httpClient)
+		proxy, _ := NewElrondProxy(args)
+
+		response, err := proxy.GetAccountKeys(context.Background(), address)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "Bad Request")
+		assert.Nil(t, response)
+	})
+	t.Run("fail on response error message", func(t *testing.T) {
+		httpClient := createMockClientRespondingBytes([]byte(`{"data":{"pairs":{"666f6f":"626172"}},"error":"fail","code":""}`))
+		args := createMockArgsElrondProxy(httpClient)
+		proxy, _ := NewElrondProxy(args)
+
+		response, err := proxy.GetAccountKeys(context.Background(), address)
+		assert.NotNil(t, err)
+		assert.IsType(t, errors.New(""), err)
+		assert.Nil(t, response)
+	})
 }
