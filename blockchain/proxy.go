@@ -395,6 +395,9 @@ func (ep *elrondProxy) RequestTransactionCost(ctx context.Context, tx *data.Tran
 	if response.Error != "" {
 		return nil, errors.New(response.Error)
 	}
+	if response.Data.RetMessage != "" {
+		return nil, errors.New(response.Data.RetMessage)
+	}
 
 	return &response.Data, nil
 }
